@@ -1,0 +1,26 @@
+{
+  "bot_token": "PUT_YOUR_BOT_TOKEN_HERE",
+  "chat_id": "PUT_YOUR_CHAT_ID_HERE",
+  "log_file": "/home/YOURUSER/rombot/build.log",
+  "state_file": "/home/YOURUSER/rombot/state.json",
+  "rom_name": "My Custom ROM",
+  "device": "fogos",
+  "user_name": "maintainer",
+  "variant": "user",
+  "build_type": "release",
+  "release": "cp2a",
+  "jobs": 0,
+  "build_root": "/home/YOURUSER/android",
+  "output_glob": "out/target/product/{device}/*.zip",
+  "error_log": "out/error.log",
+  "update_interval": 60,
+  "progress_bar_width": 12,
+  "max_error_lines": 40,
+  "quotes": [
+    "Proofreading your code... with a very judgmental compiler. 🧐",
+    "Teaching the linker some manners. 🔗",
+    "Convincing the CPU to try a little harder. 🔥",
+    "Bribing ninja with extra parallelism. 🥷",
+    "Whispering sweet nothings to soong. 🤫"
+  ]
+}

@@ -1,0 +1,16 @@
+[Unit]
+Description=rombot - Telegram monitor for ROM builds
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# EDIT: your linux username
+User=YOURUSER
+WorkingDirectory=/home/YOURUSER/rombot
+ExecStart=/usr/bin/python3 /home/YOURUSER/rombot/rombot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
