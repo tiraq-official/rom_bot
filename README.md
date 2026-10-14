@@ -16,22 +16,26 @@ It only needs `requests`. No heavy libraries, no database.
 ## How it hooks into your build (the one small change)
 
 To show live progress the bot has to see the build's output stream. Because your
-build command changes from ROM to ROM (`brunch fogos`, `mka bacon`, `m derp`,
-`ax -br`, …), it does **not** hardcode any command. Instead you prefix your normal
+build command changes from ROM to ROM (`ax -br`, `brunch fogos`, `mka bacon`,
+`m derp`, …), it does **not** hardcode any command. Instead you prefix your normal
 command with `rb`:
 
 ```bash
+rb ax -br -j16
 rb brunch fogos
 rb mka bacon
-rb m derp
 ```
 
-`rb` is a 30-line wrapper: it records a START marker, streams the build output
-into `build.log` (which the bot watches), and records an END marker with the real
-exit code. That's the whole workflow change — same command, just `rb` in front.
+`rb` is a small shell **function**, not a script. That distinction matters: ROM
+build commands like `ax`, `m`, `brunch` and `mka` are themselves shell functions
+created by `. build/envsetup.sh`, and a separate script cannot call them (and
+`stdbuf` cannot exec a function). So `rb` has to live inside your shell — see
+step 8. It records a START marker, streams the build output into `build.log`
+(which the bot watches), and records an END marker with the real exit code.
+Same command, just `rb` in front.
 
 > If you'd rather not use `rb`, the bot still works if you tee the build yourself:
-> `brunch fogos 2>&1 | tee -a ~/rombot/build.log`. It auto-detects a build the
+> `ax -br -j16 2>&1 | tee -a ~/rombot/build.log`. It auto-detects a build the
 > moment progress lines appear in the log.
 
 ---
@@ -60,8 +64,10 @@ Copy this folder to the VM, e.g. to `~/rombot`:
 
 ```
 ~/rombot/
-├── rombot.py
-├── rb
+├── rombot.py          # the Telegram bot daemon
+├── rb                 # the build wrapper (source it, it's a shell function)
+├── post_build.py      # upload + auto-shutdown after a build
+├── setup_sudoers.sh   # one-time: passwordless poweroff
 ├── config.json
 ├── rombot.service
 └── README.md
@@ -85,13 +91,25 @@ At minimum set:
   `out/target/product/{device}/*.zip`)
 
 ### 5. Get your `chat_id`
-You can leave `chat_id` as the placeholder for this step.
+Leave `chat_id` as the placeholder for this step. Open Telegram, find your bot and
+send it anything (e.g. `/start`). Then, back in the terminal:
+
 ```bash
 cd ~/rombot
-python3 rombot.py          # run it once in the foreground
+python3 rombot.py --getid
 ```
-Now open Telegram, find your bot, and send it `/id`. It replies with your chat id.
-Paste that into `config.json` as `chat_id` and stop the bot (Ctrl-C).
+
+It prints your chat id, e.g. `123456789 (Saptak)`. Paste that into `config.json`
+as `chat_id`.
+
+> Alternative: run `python3 rombot.py` (it is normal for it to sit there silently
+> — it is waiting for messages) and send the bot `/id`. Then Ctrl-C to stop it.
+
+### 5b. Set the chat_id and start
+```bash
+nano config.json     # put the number in "chat_id", save (Ctrl-O, Enter, Ctrl-X)
+python3 rombot.py    # you should now get "rombot is online" in Telegram
+```
 
 ### 6. Test it
 ```bash
@@ -123,16 +141,87 @@ python3 rombot.py
 # then detach with Ctrl-A D (byobu) — it keeps running
 ```
 
-### 8. Make `rb` easy to type
+### 8. Make `rb` available in your shell
+
+`rb` is a function, so you **source** it (once per shell). Add it to `~/.bashrc`
+so every new shell has it:
+
 ```bash
-chmod +x ~/rombot/rb
-# add an alias so you can call it from anywhere:
-echo 'alias rb="~/rombot/rb"' >> ~/.bashrc && source ~/.bashrc
+echo 'source ~/rombot/rb' >> ~/.bashrc
+source ~/.bashrc
 ```
-Then build as usual:
+
+Then, in your build shell (after `. build/envsetup.sh`), build as usual:
+
 ```bash
-rb brunch fogos
+rb ax -br -j16
 ```
+
+> If you previously added an alias, or a `/usr/local/bin/rb` launcher, remove it
+> (`sudo rm -f /usr/local/bin/rb`) — the sourced function replaces it.
+
+---
+
+## Post-build automation (upload + auto-shutdown)
+
+When a build started with `rb` finishes, `rb` runs `post_build.py`, which:
+
+- **On success:** uploads the ROM via
+  [rom_upload_script](https://github.com/tiraq-official/rom_upload_script),
+  then powers the server off.
+
+  The upload repo is cloned **inside your ROM source tree**
+  (`<build_root>/rom_upload_script`, e.g. `~/axion/rom_upload_script`), then
+  `python3 release.py` is run from there. That location matters: `release.py`
+  looks for the ROM at `../out/target/product/fogos`, so it has to sit one level
+  below the folder that contains `out/`.
+
+  `release.py` needs `rsync` (`sudo apt install -y rsync`) and a SourceForge SSH
+  key registered on the machine; without the key it just skips the SourceForge
+  mirror and still uploads to GoFile/Pixeldrain.
+- **On failure:** posts a warning, waits `grace_seconds` (default 600 = 10 min),
+  then powers the server off.
+
+**Cancelling the shutdown.** During the grace period the shutdown is cancelled if
+EITHER of these happens:
+
+- you **type anything in the build terminal**, or
+- you **send any Telegram message** to the bot (e.g. `/cancel`, or even `/status`).
+
+The bot replies "⛔ Auto-shutdown cancelled". Handy when you're away from the
+terminal.
+
+**Two guards, so it never shuts down by accident:**
+
+- The success path only acts if it actually finds an output zip. A quick test
+  build (`rb echo ...`) produces no zip, so nothing is uploaded and nothing is
+  powered off.
+- Set `"post_build": { "enabled": false }` in `config.json` to switch the whole
+  thing off.
+
+**One-time setup: passwordless poweroff.** `post_build.py` runs
+`sudo -n systemctl poweroff`, so your user needs to be allowed to power off
+without a password prompt (otherwise the shutdown hangs when you're not there):
+
+```bash
+bash ~/rombot/setup_sudoers.sh
+```
+
+**Tuning** (in the `post_build` block of `config.json`):
+
+| Key | Meaning |
+|-----|---------|
+| `enabled` | master on/off |
+| `grace_seconds` | how long to wait before shutdown on failure (default 600) |
+| `upload_on_success` | run the upload step at all |
+| `upload_repo` | the git repo to clone for uploading |
+| `upload_dir` | where to clone it — must be inside the ROM source tree (default `<build_root>/rom_upload_script`) |
+| `release_cmd` | the command run inside `upload_dir` (default `python3 release.py`) |
+| `poweroff_on_success` / `poweroff_on_failure` | whether to power off in each case |
+
+> Because this runs from the shell where you launched `rb`, keep that session
+> alive (byobu is ideal) until the build finishes. If you close it, the build's
+> post-build steps won't run.
 
 ---
 
@@ -165,15 +254,20 @@ rb brunch fogos
 - **`build.log` grows large** over time (it's the full build output). Rotate or
   delete it occasionally; the bot resets its read position automatically if the
   file shrinks.
-- **`rb` uses `stdbuf`** so progress appears live rather than in buffered chunks.
+- **`rb` uses `stdbuf`** on real executables so progress appears live rather
+  than in buffered chunks; shell functions (like `ax`) are run directly.
 
 ---
 
 ## Troubleshooting
 
 - **No progress messages, only start/finish.** Your build may not print ninja
-  status lines, or output is buffered. Make sure you launch with `rb` (which uses
-  `stdbuf`). Check `build.log` — you should see `[ X% Y/Z]` lines.
+  status lines, or output is buffered. Make sure you launch with `rb` (sourced as
+  a function). Check `build.log` — you should see `[ X% Y/Z]` lines.
+- **`stdbuf: failed to run command 'ax': No such file or directory`.** You are
+  using the old script version of `rb`. `ax`/`m`/`brunch` are shell functions, so
+  `rb` must be the sourced function (step 8), not an executable script. Also make
+  sure `. build/envsetup.sh` has been run in that shell first.
 - **Bot doesn't respond.** Token/chat id wrong, or the process isn't running
   (`systemctl status rombot`). Try `/id`.
 - **"state save failed" on startup.** The folder in `state_file` / `log_file`

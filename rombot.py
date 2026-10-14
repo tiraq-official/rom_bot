@@ -175,6 +175,11 @@ class RomBot:
         return self._tg("sendMessage", chat_id=self.chat_id, text=text,
                         parse_mode="HTML", disable_web_page_preview=True)
 
+    def send_to(self, chat_id, text: str) -> dict:
+        """Send to an explicit chat (used before chat_id is configured)."""
+        return self._tg("sendMessage", chat_id=str(chat_id), text=text,
+                        parse_mode="HTML", disable_web_page_preview=True)
+
     def edit_message(self, msg_id: int, text: str) -> dict:
         return self._tg("editMessageText", chat_id=self.chat_id, message_id=msg_id,
                         text=text, parse_mode="HTML", disable_web_page_preview=True)
@@ -432,11 +437,23 @@ class RomBot:
         except Exception as e:
             return f"(could not read log: {e})"
 
+    def handle_message(self, chat_id, text: str):
+        # Any message from the owner cancels a pending auto-shutdown.
+        if str(chat_id) == self.chat_id and os.path.exists(os.path.join(BASE_DIR, ".poweroff_pending")):
+            try:
+                open(os.path.join(BASE_DIR, ".poweroff_cancel"), "w").close()
+            except Exception:
+                pass
+            self.send_to(chat_id, "\u26D4 Auto-shutdown cancelled \u2014 the server will stay up.")
+        if text.startswith("/"):
+            self.handle_command(chat_id, text)
+
     def handle_command(self, chat_id, text: str):
         cmd = text.strip().split()[0].lstrip("/").split("@")[0].lower()
 
         if cmd == "id":
-            self.send_message(f"\U0001F194 Your chat id: <code>{esc(chat_id)}</code>")
+            # reply to the SENDER, not the configured chat (which may still be a placeholder)
+            self.send_to(chat_id, f"\U0001F194 Your chat id: <code>{esc(chat_id)}</code>")
             return
 
         if str(chat_id) != self.chat_id:
@@ -489,8 +506,7 @@ class RomBot:
                     msg = u.get("message") or u.get("edited_message")
                     if not msg or "text" not in msg:
                         continue
-                    if msg["text"].startswith("/"):
-                        self.handle_command(msg["chat"]["id"], msg["text"])
+                    self.handle_message(msg["chat"]["id"], msg["text"])
             except Exception as e:
                 print("poll error:", e)
                 time.sleep(5)
@@ -575,11 +591,49 @@ ninja: build stopped: subcommand failed.
 
 
 # --------------------------------------------------------------------------- #
+# --getid: print the chat id(s) that have messaged the bot
+# --------------------------------------------------------------------------- #
+def get_id(cfg: dict):
+    token = str(cfg["bot_token"])
+    if "PUT_YOUR" in token:
+        print("Set bot_token in config.json first (from @BotFather).")
+        return
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates",
+                         params={"timeout": 0}, timeout=30)
+        data = r.json()
+    except Exception as e:
+        print("Could not reach Telegram:", e)
+        return
+    if not data.get("ok"):
+        print("Telegram said:", data.get("description", data))
+        return
+    seen = []
+    for u in data.get("result", []):
+        m = u.get("message") or u.get("edited_message") or {}
+        c = m.get("chat")
+        if c and c.get("id") not in [s[0] for s in seen]:
+            seen.append((c.get("id"), c.get("first_name") or c.get("username") or c.get("title")))
+    if not seen:
+        print("No messages found yet.")
+        print("Open Telegram, message your bot (send /start), then run:  python3 rombot.py --getid")
+        return
+    print("Your chat id(s):")
+    for cid, name in seen:
+        print(f"  {cid}   ({name})")
+    print("\nPaste that number into config.json as chat_id.")
+
+
+# --------------------------------------------------------------------------- #
 def main():
     cfg = load_config()
 
     if "--selftest" in sys.argv:
         selftest(cfg)
+        return
+
+    if "--getid" in sys.argv:
+        get_id(cfg)
         return
 
     if "PUT_YOUR" in str(cfg["bot_token"]):
@@ -592,7 +646,10 @@ def main():
     bot = RomBot(cfg)
     bot.announce_online()
     threading.Thread(target=bot.monitor_loop, daemon=True).start()
-    bot.poll_loop()
+    try:
+        bot.poll_loop()
+    except KeyboardInterrupt:
+        print("\nrombot stopped.")
 
 
 if __name__ == "__main__":

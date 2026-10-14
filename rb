@@ -1,46 +1,64 @@
 #!/usr/bin/env bash
 #
-# rb - run any custom ROM build command and stream it to the rombot log.
+# rb - ROM build wrapper for rombot.
 #
-# Because every ROM has its own build command (brunch / mka bacon / m derp / ax -br
-# ...), rb does not care what you pass it. Just put your normal command after rb:
+# IMPORTANT: this file defines a shell FUNCTION. It is NOT a normal script.
 #
-#     rb brunch fogos
-#     rb mka bacon
-#     rb m derp
-#     rb ax -br
+# ROM build commands such as `ax`, `m`, `brunch`, `mka` are themselves shell
+# functions created by `. build/envsetup.sh`. A separate script cannot see
+# them, and `stdbuf` cannot exec a function - which is why `rb ax -br` fails
+# with "stdbuf: failed to run command 'ax'". So `rb` has to live inside your
+# shell as a function.
 #
-# It writes a START marker, tees the whole build output into the log that
-# rombot watches, then writes an END marker with the real exit code.
+# Usage:
+#   1. Set up the ROM environment in your build shell:
+#          . build/envsetup.sh
+#   2. Load this wrapper (once per shell; add the source line to ~/.bashrc so
+#      every new shell has it):
+#          source ~/rombot/rb
+#   3. Build as usual:
+#          rb ax -br -j16
 #
-set -o pipefail
+# After the build it runs post_build.py, which (if enabled in config.json)
+# uploads the ROM and powers the server off.
+#
+rb() {
+    local dir; dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local log="${ROMBOT_LOG:-$dir/build.log}"
+    if [ "$#" -eq 0 ]; then
+        echo "usage: rb <build command...>    e.g.  rb ax -br -j16" >&2
+        return 2
+    fi
 
-ROMBOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG="${ROMBOT_LOG:-$ROMBOT_DIR/build.log}"
+    printf '###ROMBOT_START %s %s\n' "$(date +%s)" "$*" >> "$log"
 
-if [ "$#" -eq 0 ]; then
-    echo "usage: rb <your build command...>" >&2
-    echo "e.g.   rb brunch fogos" >&2
-    exit 2
+    # Shell functions / builtins are run directly; real executables get stdbuf
+    # so their output is line-buffered and the bot sees progress live.
+    if [ "$(type -t "$1")" = "file" ] && command -v stdbuf >/dev/null 2>&1; then
+        stdbuf -oL -eL "$@" 2>&1 | tee -a "$log"
+    else
+        "$@" 2>&1 | tee -a "$log"
+    fi
+    local code=${PIPESTATUS[0]}
+
+    printf '###ROMBOT_END %s %s\n' "$(date +%s)" "$code" >> "$log"
+
+    if [ "$code" -eq 0 ]; then
+        echo "rb: build finished (exit 0)"
+    else
+        echo "rb: build failed (exit $code)"
+    fi
+
+    # Post-build automation: upload the ROM and (optionally) power off.
+    if [ -f "$dir/post_build.py" ]; then
+        python3 "$dir/post_build.py" "$code"
+    fi
+
+    return "$code"
+}
+
+# If someone runs this file directly instead of sourcing it, say so.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    echo "rb defines a shell function - source it, don't run it directly:" >&2
+    echo "    source \"$0\"" >&2
 fi
-
-# Record the command line for the bot
-printf '###ROMBOT_START %s %s\n' "$(date +%s)" "$*" >> "$LOG"
-
-# stdbuf keeps output line-buffered so the bot sees progress live (not in 4 KB chunks)
-if command -v stdbuf >/dev/null 2>&1; then
-    stdbuf -oL -eL "$@" 2>&1 | tee -a "$LOG"
-else
-    "$@" 2>&1 | tee -a "$LOG"
-fi
-code=${PIPESTATUS[0]}
-
-printf '###ROMBOT_END %s %s\n' "$(date +%s)" "$code" >> "$LOG"
-
-echo
-if [ "$code" -eq 0 ]; then
-    echo "rb: build finished (exit 0)"
-else
-    echo "rb: build failed (exit $code)"
-fi
-exit "$code"

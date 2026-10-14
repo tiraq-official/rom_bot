@@ -3,24 +3,26 @@
   "chat_id": "PUT_YOUR_CHAT_ID_HERE",
   "log_file": "/home/YOURUSER/rombot/build.log",
   "state_file": "/home/YOURUSER/rombot/state.json",
-  "rom_name": "My Custom ROM",
+  "rom_name": "Axion",
   "device": "fogos",
   "user_name": "maintainer",
   "variant": "user",
   "build_type": "release",
   "release": "cp2a",
   "jobs": 0,
-  "build_root": "/home/YOURUSER/android",
+  "build_root": "/home/YOURUSER/axion",
   "output_glob": "out/target/product/{device}/*.zip",
   "error_log": "out/error.log",
   "update_interval": 60,
   "progress_bar_width": 12,
   "max_error_lines": 40,
-  "quotes": [
-    "Proofreading your code... with a very judgmental compiler. 🧐",
-    "Teaching the linker some manners. 🔗",
-    "Convincing the CPU to try a little harder. 🔥",
-    "Bribing ninja with extra parallelism. 🥷",
-    "Whispering sweet nothings to soong. 🤫"
-  ]
+  "post_build": {
+    "enabled": true,
+    "grace_seconds": 600,
+    "upload_on_success": true,
+    "upload_repo": "https://github.com/tiraq-official/rom_upload_script",
+    "release_cmd": "python3 release.py",
+    "poweroff_on_success": true,
+    "poweroff_on_failure": true
+  }
 }
