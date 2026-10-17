@@ -95,7 +95,12 @@ DEFAULTS = {
 # Parsing helpers
 # --------------------------------------------------------------------------- #
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-PROG_RE = re.compile(r"\[\s*(\d+)%\s+(\d+)/(\d+)\s*\]")
+# Ninja/soong progress. The counts are NOT always immediately followed by
+# "]": some builds print an ETA inside the bracket, e.g.
+#   [  3% 915/27036 40m3s remaining] //packages/apps/Updater/...
+PROG_RE = re.compile(r"\[\s*(\d+)%\s+(\d+)/(\d+)")
+# Ninja's own ETA, when present ("40m3s remaining", "1h2m3s remaining").
+ETA_RE = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?\s*remaining")
 START_MARK = re.compile(r"^###ROMBOT_START\s+(\d+)\s*(.*)$")
 END_MARK = re.compile(r"^###ROMBOT_END\s+(\d+)\s+(\d+)\s*$")
 SUCCESS_RE = re.compile(r"####\s+build completed successfully")
@@ -153,6 +158,7 @@ class RomBot:
         self.start_ts = None
         self.done = 0
         self.total = 0
+        self.eta_seconds = None
         self.cmdline = ""
         self.progress_msg_id = None
         self.last_sent = 0.0
@@ -308,6 +314,11 @@ class RomBot:
         if meaningful:
             self.done = int(pm.group(2))
             self.total = int(pm.group(3))
+            em = ETA_RE.search(line)
+            if em and any(em.groups()):
+                self.eta_seconds = (int(em.group(1) or 0) * 3600
+                                    + int(em.group(2) or 0) * 60
+                                    + int(em.group(3) or 0))
             return
 
         if SUCCESS_RE.search(line):
@@ -328,6 +339,7 @@ class RomBot:
         self.start_ts = ts or time.time()
         self.done = 0
         self.total = 0
+        self.eta_seconds = None
         self.cmdline = cmdline
         self.progress_msg_id = None
         self.last_sent = 0.0
@@ -358,7 +370,10 @@ class RomBot:
             f"Actions: {self.done}/{self.total}",
             f"\u231B Elapsed: {human(elapsed)}",
         ]
-        if 0 < self.done < self.total:
+        if self.eta_seconds:
+            # Prefer ninja's own estimate when it prints one.
+            out.append(f"\u23F1\uFE0F ETA: {human(self.eta_seconds)}")
+        elif 0 < self.done < self.total:
             eta = elapsed * (self.total - self.done) / self.done
             out.append(f"\u23F1\uFE0F ETA: {human(eta)}")
         out += [

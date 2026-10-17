@@ -251,6 +251,9 @@ bash ~/rombot/setup_sudoers.sh
 - **Progress parsing:** it reads standard ninja/soong status lines
   (`[ 55% 126308/227214] ...`) and Android's result lines
   (`#### build completed successfully` / `#### failed to build some targets`).
+  It also handles a build that prints an ETA inside the brackets
+  (`[  3% 915/27036 40m3s remaining] ...`) and shows ninja's own estimate
+  when it's available.
   Two settings keep the bar honest on multi-phase Android builds:
   - `min_total` (default 100) — progress lines whose total is smaller are
     ignored, so the tiny soong "bootstrap" step that reports `[100% 1/1]` no
