@@ -251,6 +251,22 @@ bash ~/rombot/setup_sudoers.sh
 - **Progress parsing:** it reads standard ninja/soong status lines
   (`[ 55% 126308/227214] ...`) and Android's result lines
   (`#### build completed successfully` / `#### failed to build some targets`).
+  Two settings keep the bar honest on multi-phase Android builds:
+  - `min_total` (default 100) — progress lines whose total is smaller are
+    ignored, so the tiny soong "bootstrap" step that reports `[100% 1/1]` no
+    longer parks the bar at 100% before ninja starts.
+  - `min_build_seconds` (default 60) — a `#### build completed successfully
+    (00:00:04 …)` line shorter than this is ignored, because sub-steps like
+    `m installclean` print that exact line a few seconds into the build.
+  Raise `min_total` (e.g. to 10000) if your build has other small phases you'd
+  rather not show.
+- **Stale / cancelled builds:** if a running build stops writing to the log for
+  `stale_seconds` (default 900 = 15 min) — e.g. you cancelled it with Ctrl-C —
+  the bot posts one "build looks stopped or cancelled" note and stops showing
+  "in progress". Lower it if you want it to give up sooner.
+- **No duplicate spam:** the bot edits one message in place, and a Telegram
+  "message is not modified" reply (which happens when nothing changed) is
+  ignored rather than posted again.
 - **`build.log` grows large** over time (it's the full build output). Rotate or
   delete it occasionally; the bot resets its read position automatically if the
   file shrinks.

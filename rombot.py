@@ -69,6 +69,19 @@ DEFAULTS = {
     "progress_bar_width": 12,
     "max_error_lines": 40,
 
+    # Progress-accuracy tuning.
+    #   min_total: ignore progress lines whose total is below this. Skips the
+    #     tiny soong "bootstrap" step that reports [100% 1/1], which would
+    #     otherwise park the bar at 100% before the real (ninja) compile starts.
+    #   min_build_seconds: ignore a "#### build completed successfully (H:M:S)"
+    #     line shorter than this many seconds. Sub-steps like `m installclean`
+    #     print that same line in a few seconds; a real build runs far longer.
+    "min_total": 100,
+    "min_build_seconds": 60,
+    # If a running build stops writing to the log for this many seconds
+    # (e.g. you cancelled it with Ctrl-C), stop showing "in progress".
+    "stale_seconds": 900,
+
     "quotes": [
         "Proofreading your code... with a very judgmental compiler. \U0001F9D0",
         "Teaching the linker some manners. \U0001F517",
@@ -143,6 +156,8 @@ class RomBot:
         self.cmdline = ""
         self.progress_msg_id = None
         self.last_sent = 0.0
+        self.last_state_save = 0.0
+        self.last_line_ts = time.time()
         self.recent = deque(maxlen=300)   # ring buffer of recent log lines
 
     # ---------------- state persistence ---------------- #
@@ -248,9 +263,22 @@ class RomBot:
             time.sleep(2)
 
     def tick(self):
-        for line in self._read_new_lines():
+        lines = self._read_new_lines()
+        now = time.time()
+        for line in lines:
             self._handle_line(line)
-        if self.building and (time.time() - self.last_sent) >= self.cfg["update_interval"]:
+        if lines:
+            self.last_line_ts = now
+        # Persist our read position regularly, so restarting the bot does not
+        # replay old log lines (which caused stray "started"/"succeeded" posts).
+        if now - self.last_state_save > 10:
+            self.last_state_save = now
+            self._save_state()
+        # A cancelled build stops writing to the log. Don't sit on a stale
+        # "in progress" card forever.
+        if self.building and (now - self.last_line_ts) > self.cfg.get("stale_seconds", 900):
+            self._end_build(int(now), 1, stalled=True)
+        if self.building and (now - self.last_sent) >= self.cfg["update_interval"]:
             self._send_progress()
 
     def _handle_line(self, line: str):
@@ -266,21 +294,31 @@ class RomBot:
             self._end_build(int(m.group(1)), int(m.group(2)))
             return
 
+        pm = PROG_RE.search(line)
+        # Only "meaningful" progress lines count - see min_total in DEFAULTS.
+        meaningful = bool(pm) and int(pm.group(3)) >= self.cfg.get("min_total", 100)
+
         # Detect a build that was launched outside the `rb` wrapper
-        if not self.building and PROG_RE.search(line):
+        if not self.building and meaningful:
             self._start_build(int(time.time()), "(started outside the rb wrapper)")
 
         if not self.building:
             return
 
-        pm = PROG_RE.search(line)
-        if pm:
+        if meaningful:
             self.done = int(pm.group(2))
             self.total = int(pm.group(3))
             return
 
         if SUCCESS_RE.search(line):
-            self._end_build(int(time.time()), 0, success_hint=True)
+            # Sub-steps (e.g. `m installclean`) print this line too, with a very
+            # short duration. Only a genuinely long build counts as the success.
+            dur = 0
+            dm = re.search(r"\((\d+):(\d+):(\d+)", line)
+            if dm:
+                dur = int(dm.group(1)) * 3600 + int(dm.group(2)) * 60 + int(dm.group(3))
+            if dur >= self.cfg.get("min_build_seconds", 60):
+                self._end_build(int(time.time()), 0, success_hint=True)
         elif FAIL_RE.search(line) or NINJA_FAIL_RE.search(line):
             self._end_build(int(time.time()), 1, success_hint=False)
 
@@ -293,6 +331,7 @@ class RomBot:
         self.cmdline = cmdline
         self.progress_msg_id = None
         self.last_sent = 0.0
+        self.last_line_ts = time.time()
         self.recent.clear()
 
         head = (
@@ -342,6 +381,12 @@ class RomBot:
                 if r.get("ok"):
                     self.last_sent = time.time()
                     return
+                # Telegram rejects an edit that changes nothing ("message is not
+                # modified"). That is fine - do NOT post a duplicate, which is
+                # what used to spam the chat when a build stalled or was cancelled.
+                if "not modified" in str(r.get("description", "")).lower():
+                    self.last_sent = time.time()
+                    return
             r = self.send_message(text)
             if r.get("ok"):
                 self.progress_msg_id = r["result"]["message_id"]
@@ -361,11 +406,21 @@ class RomBot:
         hits = [l for l in self.recent if ERROR_LINE_RE.search(l)]
         return "\n".join(hits[-n:])
 
-    def _end_build(self, ts: int, code: int, success_hint=None):
+    def _end_build(self, ts: int, code: int, success_hint=None, stalled=False):
         if not self.building:
             return
         self.building = False
         elapsed = (ts or time.time()) - (self.start_ts or time.time())
+
+        if stalled:
+            self.send_message(
+                "\u26A0\uFE0F No build output for a while \u2014 the build looks "
+                "stopped or cancelled. Standing by.")
+            self.last_result = "\u26A0\uFE0F Build stopped (no output)."
+            self.progress_msg_id = None
+            self._save_state()
+            return
+
         success = (code == 0) if success_hint is None else success_hint
 
         if success:

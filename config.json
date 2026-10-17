@@ -16,6 +16,9 @@
   "update_interval": 60,
   "progress_bar_width": 12,
   "max_error_lines": 40,
+  "min_total": 100,
+  "min_build_seconds": 60,
+  "stale_seconds": 900,
   "post_build": {
     "enabled": true,
     "grace_seconds": 600,
