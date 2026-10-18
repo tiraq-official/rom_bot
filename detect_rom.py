@@ -16,6 +16,7 @@ config.json, and to the values it reads from the build log itself.
 import glob
 import json
 import os
+import re
 import sys
 
 # vendor/ dirs that are a shared base, not the ROM's own name
@@ -103,15 +104,28 @@ def guess_variant(root):
 
 
 def guess_release(root, device):
-    if not device:
-        return ""
-    bp = os.path.join(root, "out", "target", "product", device, "system", "build.prop")
-    if os.path.isfile(bp):
+    # 1) an already-built device: read it back from its build.prop
+    if device:
+        bp = os.path.join(root, "out", "target", "product", device, "system", "build.prop")
+        if os.path.isfile(bp):
+            try:
+                with open(bp, errors="ignore") as f:
+                    for line in f:
+                        if line.startswith("ro.build.id="):
+                            return line.split("=", 1)[1].strip().split(".")[0].lower()
+            except OSError:
+                pass
+    # 2) the build-id makefile in the source (e.g. "BUILD_ID := CP2A.260605.016")
+    files = (glob.glob(os.path.join(root, "build", "make", "core", "*.mk"))
+             + glob.glob(os.path.join(root, "build", "core", "*.mk"))
+             + glob.glob(os.path.join(root, "vendor", "*", "config", "*.mk")))
+    for p in files:
         try:
-            with open(bp, errors="ignore") as f:
+            with open(p, errors="ignore") as f:
                 for line in f:
-                    if line.startswith("ro.build.id="):
-                        return line.split("=", 1)[1].strip().split(".")[0].lower()
+                    m = re.match(r"\s*BUILD_ID\s*:?=\s*([A-Za-z0-9]+)", line)
+                    if m:
+                        return m.group(1).lower()
         except OSError:
             pass
     return ""
