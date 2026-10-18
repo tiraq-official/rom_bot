@@ -40,6 +40,38 @@ Same command, just `rb` in front.
 
 ---
 
+## Dynamic ROM detection (works across ROMs)
+
+You do **not** edit `config.json` for each ROM. When you run `rb <command>` the
+wrapper:
+
+1. looks at the source tree you're in (walks up to find `build/envsetup.sh`),
+2. works out the **ROM name** (from `vendor/<rom>/`, else the folder name),
+   **codename**, **variant**, **release**, `build_root` and your user, then
+3. writes them into `config.json` and hands them to the bot.
+
+The bot also reads the values the build itself prints in its config banner
+(`TARGET_PRODUCT=`, `TARGET_BUILD_VARIANT=`, `BUILD_ID=`) and prefers those, so
+the card stays correct even if detection guessed wrong.
+
+So switching ROMs is just: sync into a folder, `cd` into it, `rb <build cmd>` —
+the status message picks up the right name and device by itself. The
+`rom_name` / `device` / `variant` / `release` fields in `config.json` become
+fallbacks (used only when detection and the banner find nothing).
+
+See what it detects for the current tree:
+
+```bash
+python3 ~/rombot/detect_rom.py
+```
+
+ROM name comes from `vendor/<rom>/` if that matches the folder you synced into,
+otherwise from the folder name — so sync Axion into `~/axion`, Shinkai into
+`~/shinkai`, and it just works. If a name comes out wrong, rename the source
+folder to match the ROM (or tweak `guess_rom_name()` in `detect_rom.py`).
+
+---
+
 ## Where to run it — recommendation
 
 **Run it on the build VM itself**, in the same account that runs the build. That

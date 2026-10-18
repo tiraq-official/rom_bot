@@ -19,8 +19,9 @@
 #   3. Build as usual:
 #          rb ax -br -j16
 #
-# After the build it runs post_build.py, which (if enabled in config.json)
-# uploads the ROM and powers the server off.
+# Before each build it auto-detects which ROM/device the source tree is
+# (rom name, codename, variant, release, build dir) and hands that to the bot,
+# so you don't have to edit config.json when you switch ROMs.
 #
 rb() {
     local dir; dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +29,16 @@ rb() {
     if [ "$#" -eq 0 ]; then
         echo "usage: rb <build command...>    e.g.  rb ax -br -j16" >&2
         return 2
+    fi
+
+    # --- detect the ROM/device and hand it to the bot (dynamic values) ---
+    if [ -f "$dir/detect_rom.py" ]; then
+        local info
+        info="$(python3 "$dir/detect_rom.py" --write "$dir/config.json" "$@" 2>/dev/null | tail -n1)"
+        if [ -n "$info" ]; then
+            printf '###ROMBOT_INFO %s\n' "$info" >> "$log"
+            echo "rb: detected $info"
+        fi
     fi
 
     printf '###ROMBOT_START %s %s\n' "$(date +%s)" "$*" >> "$log"

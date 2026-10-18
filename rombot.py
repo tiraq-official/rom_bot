@@ -101,6 +101,12 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 PROG_RE = re.compile(r"\[\s*(\d+)%\s+(\d+)/(\d+)")
 # Ninja's own ETA, when present ("40m3s remaining", "1h2m3s remaining").
 ETA_RE = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?\s*remaining")
+# ROM identity that `rb` detected from the source tree (###ROMBOT_INFO {json}).
+INFO_MARK = re.compile(r"^###ROMBOT_INFO\s+(.*)$")
+# Identity the build itself prints in its config banner - the most reliable.
+BANNER_PRODUCT = re.compile(r"^TARGET_PRODUCT=([A-Za-z0-9_]+)")
+BANNER_VARIANT = re.compile(r"^TARGET_BUILD_VARIANT=([A-Za-z0-9_]+)")
+BANNER_BUILDID = re.compile(r"^BUILD_ID=([A-Za-z0-9]+)")
 START_MARK = re.compile(r"^###ROMBOT_START\s+(\d+)\s*(.*)$")
 END_MARK = re.compile(r"^###ROMBOT_END\s+(\d+)\s+(\d+)\s*$")
 SUCCESS_RE = re.compile(r"####\s+build completed successfully")
@@ -164,6 +170,8 @@ class RomBot:
         self.last_sent = 0.0
         self.last_state_save = 0.0
         self.last_line_ts = time.time()
+        self.identity = {}                # ROM name/device/... detected dynamically
+        self.info_ts = 0.0
         self.recent = deque(maxlen=300)   # ring buffer of recent log lines
 
     # ---------------- state persistence ---------------- #
@@ -290,6 +298,29 @@ class RomBot:
     def _handle_line(self, line: str):
         self.recent.append(line)
 
+        m = INFO_MARK.match(line)
+        if m:
+            try:
+                self.identity.update(json.loads(m.group(1)))
+                self.info_ts = time.time()
+            except Exception:
+                pass
+            return
+
+        # The build's own config banner is authoritative - trust it over config.
+        m = BANNER_PRODUCT.match(line)
+        if m:
+            self.identity["device"] = m.group(1).split("_")[-1]
+            self.info_ts = time.time()
+        m = BANNER_VARIANT.match(line)
+        if m:
+            self.identity["variant"] = m.group(1)
+            self.info_ts = time.time()
+        m = BANNER_BUILDID.match(line)
+        if m:
+            self.identity["release"] = m.group(1).lower()
+            self.info_ts = time.time()
+
         m = START_MARK.match(line)
         if m:
             self._start_build(int(m.group(1)), m.group(2).strip())
@@ -335,6 +366,10 @@ class RomBot:
 
     # ---------------- build lifecycle ---------------- #
     def _start_build(self, ts: int, cmdline: str):
+        # If nothing refreshed the identity recently (no `rb` detect, no banner
+        # yet), drop values left over from a previous ROM.
+        if time.time() - self.info_ts > 120:
+            self.identity = {}
         self.building = True
         self.start_ts = ts or time.time()
         self.done = 0
@@ -348,11 +383,16 @@ class RomBot:
 
         head = (
             "\U0001F680 <b>Build started</b> \u2014 "
-            f"<b>{esc(self.cfg['rom_name'])}</b> on <code>{esc(self.cfg['device'])}</code>\n"
+            f"<b>{esc(self._id('rom_name'))}</b> on <code>{esc(self._id('device'))}</code>\n"
             f"\u25B6\uFE0F <code>{esc(cmdline or 'build')}</code>"
         )
         self.send_message(head)
         self._send_progress()
+
+    def _id(self, key, default=""):
+        """ROM identity: the value detected from the tree/banner, else config.json."""
+        v = self.identity.get(key)
+        return v if v not in (None, "") else self.cfg.get(key, default)
 
     def _progress_text(self) -> str:
         cfg = self.cfg
@@ -363,9 +403,9 @@ class RomBot:
         jobs = cfg["jobs"] or (os.cpu_count() or 1)
 
         out = [
-            f"\u2699\uFE0F <b>Build In Progress</b> for <b>{esc(cfg['rom_name'])}</b> "
-            f"on <code>{esc(cfg['device'])}</code>",
-            f"\U0001F464 User: {esc(cfg['user_name'])}",
+            f"\u2699\uFE0F <b>Build In Progress</b> for <b>{esc(self._id('rom_name'))}</b> "
+            f"on <code>{esc(self._id('device'))}</code>",
+            f"\U0001F464 User: {esc(self._id('user_name'))}",
             f"\U0001F4CA Progress: <code>[{bar}]</code> {pct:.2f}%",
             f"Actions: {self.done}/{self.total}",
             f"\u231B Elapsed: {human(elapsed)}",
@@ -379,9 +419,9 @@ class RomBot:
         out += [
             "",
             "\U0001F527 <b>Configuration:</b>",
-            f"Variant: {esc(cfg['variant'])}",
-            f"Type: {esc(cfg['build_type'])}",
-            f"Release: {esc(cfg['release'])}",
+            f"Variant: {esc(self._id('variant'))}",
+            f"Type: {esc(self._id('build_type'))}",
+            f"Release: {esc(self._id('release'))}",
             f"Parallel jobs: {jobs}",
         ]
         if cfg.get("quotes"):
@@ -441,8 +481,8 @@ class RomBot:
         if success:
             zips = self._output_zips()
             lines = [
-                f"\u2705 <b>Build Succeeded</b> \u2014 <b>{esc(self.cfg['rom_name'])}</b> "
-                f"on <code>{esc(self.cfg['device'])}</code>",
+                f"\u2705 <b>Build Succeeded</b> \u2014 <b>{esc(self._id('rom_name'))}</b> "
+                f"on <code>{esc(self._id('device'))}</code>",
                 f"\u231B Total time: {human(elapsed)}",
             ]
             if zips:
@@ -456,8 +496,8 @@ class RomBot:
         else:
             tail = self._error_tail(self.cfg["max_error_lines"]) or "(no error log captured)"
             text = "\n".join([
-                f"\u274C <b>Build Failed</b> \u2014 <b>{esc(self.cfg['rom_name'])}</b> "
-                f"on <code>{esc(self.cfg['device'])}</code>",
+                f"\u274C <b>Build Failed</b> \u2014 <b>{esc(self._id('rom_name'))}</b> "
+                f"on <code>{esc(self._id('device'))}</code>",
                 f"\u231B After: {human(elapsed)}",
                 f"Exit code: {code}",
                 "",
