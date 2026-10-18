@@ -168,7 +168,8 @@ When a build started with `rb` finishes, `rb` runs `post_build.py`, which:
 
 - **On success:** uploads the ROM via
   [rom_upload_script](https://github.com/tiraq-official/rom_upload_script),
-  then powers the server off.
+  then waits `grace_seconds` and powers the server off (same grace as a failure
+  — cancel by typing in the terminal or sending any Telegram message).
 
   The upload repo is cloned **inside your ROM source tree**
   (`<build_root>/rom_upload_script`, e.g. `~/axion/rom_upload_script`), then
@@ -181,6 +182,9 @@ When a build started with `rb` finishes, `rb` runs `post_build.py`, which:
   mirror and still uploads to GoFile/Pixeldrain.
 - **On failure:** posts a warning, waits `grace_seconds` (default 600 = 10 min),
   then powers the server off.
+
+Both paths use the same `grace_seconds`, so success and failure behave the same
+way: upload (or fail), wait, then power off unless you interact.
 
 **Cancelling the shutdown.** During the grace period the shutdown is cancelled if
 EITHER of these happens:

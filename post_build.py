@@ -161,8 +161,11 @@ def main():
         notify(f"\U0001F4E4 Build succeeded. Uploading <code>{os.path.basename(z)}</code> ...")
         ok = do_upload() if PB.get("upload_on_success", True) else True
         if ok:
-            notify("\U0001F4E4 Upload finished. Powering the server off now.")
-            if PB.get("poweroff_on_success", True):
+            # Same grace period as a failure: wait, then power off unless you
+            # interact (type in the terminal or send any Telegram message).
+            notify(f"\U0001F4E4 Upload finished. Powering off in {GRACE // 60} min unless you cancel "
+                   "(type here or send any Telegram message).")
+            if PB.get("poweroff_on_success", True) and not wait_grace():
                 poweroff()
         else:
             notify(f"\u26A0\uFE0F Upload failed. Powering off in {GRACE // 60} min unless you cancel.")
