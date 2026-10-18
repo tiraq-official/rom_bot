@@ -50,9 +50,17 @@ wrapper:
    **codename**, **variant**, **release**, `build_root` and your user, then
 3. writes them into `config.json` and hands them to the bot.
 
-The bot also reads the values the build itself prints in its config banner
-(`TARGET_PRODUCT=`, `TARGET_BUILD_VARIANT=`, `BUILD_ID=`) and prefers those, so
-the card stays correct even if detection guessed wrong.
+The bot also reads the values the build itself prints in its config banner and
+prefers those, so the card stays correct even if detection guessed wrong:
+
+- `TARGET_PRODUCT=shinkai_fogos` → device `fogos`
+- `TARGET_BUILD_VARIANT=userdebug` → variant `userdebug`
+- `BUILD_ID=CP2A.260605.016` → release `cp2a`
+- `SHINKAI_VERSION=…` / `SHINKAI_MAINTAINER=…` → ROM name `Shinkai`
+
+(The `<ROM>_VERSION=` line only names the ROM when the prefix isn't a shared base
+like `LINEAGE`/`AOSP`, so Lineage-based ROMs that reuse `LINEAGE_VERSION` fall
+back to the source-tree name instead.)
 
 So switching ROMs is just: sync into a folder, `cd` into it, `rb <build cmd>` —
 the status message picks up the right name and device by itself. The

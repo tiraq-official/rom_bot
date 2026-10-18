@@ -35,14 +35,18 @@ def find_root(start):
         d = parent
 
 
-def guess_rom_name(root):
-    folder = os.path.basename(root)
+# folder names that say nothing about the ROM
+GENERIC_FOLDERS = {"android", "aosp", "aospa", "source", "src", "rom", "roms",
+                   "build", "workspace", "tree", "master", "main", "lineage",
+                   "lineageos", "dev", "code"}
+
+
+def _vendor_candidates(root):
     cands = set()
     patterns = (
-        "vendor/*/config/common.mk",
-        "vendor/*/config/common_full_phone.mk",
+        "vendor/*/config/*.mk",
+        "vendor/*/config/*/*.mk",
         "vendor/*/build/envsetup.sh",
-        "vendor/*/config/version.mk",
         "vendor/*/vendorsetup.sh",
     )
     for pat in patterns:
@@ -52,9 +56,19 @@ def guess_rom_name(root):
                 i = parts.index("vendor")
                 if i + 1 < len(parts):
                     cands.add(parts[i + 1])
-    # prefer a vendor dir that matches the folder name (you sync Axion into ~/axion)
+    return cands
+
+
+def guess_rom_name(root):
+    folder = os.path.basename(root)
+    cands = _vendor_candidates(root)
+    # 1) a vendor dir that matches the folder you synced into (~/shinkai -> vendor/shinkai)
     if folder.lower() in cands:
         return folder.capitalize()
+    # 2) the folder name itself, unless it's a generic name
+    if folder and folder.lower() not in GENERIC_FOLDERS:
+        return folder.capitalize()
+    # 3) otherwise the most plausible vendor dir
     rest = sorted(c for c in cands if c.lower() not in BASE_VENDORS)
     if rest:
         return rest[0].capitalize()

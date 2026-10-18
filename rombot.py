@@ -107,6 +107,10 @@ INFO_MARK = re.compile(r"^###ROMBOT_INFO\s+(.*)$")
 BANNER_PRODUCT = re.compile(r"^TARGET_PRODUCT=([A-Za-z0-9_]+)")
 BANNER_VARIANT = re.compile(r"^TARGET_BUILD_VARIANT=([A-Za-z0-9_]+)")
 BANNER_BUILDID = re.compile(r"^BUILD_ID=([A-Za-z0-9]+)")
+# A ROM's own <ROM>_VERSION= / <ROM>_MAINTAINER= line names the ROM (e.g. SHINKAI_VERSION).
+BANNER_ROMVAR = re.compile(r"^([A-Z][A-Z0-9]{2,})_(?:VERSION|MAINTAINER)=")
+ROMVAR_IGNORE = {"LINEAGE", "AOSP", "AOSPA", "ANDROID", "PLATFORM", "TARGET",
+                 "HOST", "BUILD", "PRODUCT", "BOARD", "SOONG", "WITH", "OUT"}
 START_MARK = re.compile(r"^###ROMBOT_START\s+(\d+)\s*(.*)$")
 END_MARK = re.compile(r"^###ROMBOT_END\s+(\d+)\s+(\d+)\s*$")
 SUCCESS_RE = re.compile(r"####\s+build completed successfully")
@@ -319,6 +323,10 @@ class RomBot:
         m = BANNER_BUILDID.match(line)
         if m:
             self.identity["release"] = m.group(1).lower()
+            self.info_ts = time.time()
+        m = BANNER_ROMVAR.match(line)
+        if m and m.group(1) not in ROMVAR_IGNORE:
+            self.identity["rom_name"] = m.group(1).capitalize()
             self.info_ts = time.time()
 
         m = START_MARK.match(line)
