@@ -23,6 +23,10 @@ import sys
 BASE_VENDORS = {"lineage", "lineageos", "aosp", "aospa", "gms", "google",
                 "partner_gms", "common", "aosip", "aokp", "derp", "infinity"}
 
+# placeholder values that appear in makefiles but mean "not set"
+PLACEHOLDER = {"", "unknown", "none", "null", "nil", "n/a", "na", "unset",
+               "default", "unspecified"}
+
 
 def find_root(start):
     """Walk up until we find build/envsetup.sh - that's the source root."""
@@ -124,7 +128,7 @@ def guess_release(root, device):
             with open(p, errors="ignore") as f:
                 for line in f:
                     m = re.match(r"\s*BUILD_ID\s*:?=\s*([A-Za-z0-9]+)", line)
-                    if m:
+                    if m and m.group(1).lower() not in PLACEHOLDER:
                         return m.group(1).lower()
         except OSError:
             pass
@@ -149,6 +153,10 @@ def detect():
         "release": guess_release(root, device),
         "user_name": os.environ.get("USER") or os.environ.get("LOGNAME") or "",
     }
+    # never hand out placeholder junk like "unknown"
+    for k, v in list(info.items()):
+        if isinstance(v, str) and v.strip().lower() in PLACEHOLDER:
+            info[k] = ""
 
     if write_target:
         try:

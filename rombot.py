@@ -305,29 +305,35 @@ class RomBot:
         m = INFO_MARK.match(line)
         if m:
             try:
-                self.identity.update(json.loads(m.group(1)))
+                for k, v in json.loads(m.group(1)).items():
+                    if v not in (None, "", []):   # never clobber with an empty value
+                        self.identity[k] = v
                 self.info_ts = time.time()
             except Exception:
                 pass
             return
 
         # The build's own config banner is authoritative - trust it over config.
+        banner_hit = False
         m = BANNER_PRODUCT.match(line)
         if m:
             self.identity["device"] = m.group(1).split("_")[-1]
-            self.info_ts = time.time()
+            banner_hit = True
         m = BANNER_VARIANT.match(line)
         if m:
             self.identity["variant"] = m.group(1)
-            self.info_ts = time.time()
+            banner_hit = True
         m = BANNER_BUILDID.match(line)
         if m:
             self.identity["release"] = m.group(1).lower()
-            self.info_ts = time.time()
+            banner_hit = True
         m = BANNER_ROMVAR.match(line)
         if m and m.group(1) not in ROMVAR_IGNORE:
             self.identity["rom_name"] = m.group(1).capitalize()
+            banner_hit = True
+        if banner_hit:
             self.info_ts = time.time()
+            self.last_sent = 0.0      # refresh the card on the next tick
 
         m = START_MARK.match(line)
         if m:
@@ -400,7 +406,12 @@ class RomBot:
     def _id(self, key, default=""):
         """ROM identity: the value detected from the tree/banner, else config.json."""
         v = self.identity.get(key)
-        return v if v not in (None, "") else self.cfg.get(key, default)
+        if v in (None, ""):
+            v = self.cfg.get(key, default)
+        if isinstance(v, str) and v.strip().lower() in (
+                "unknown", "none", "null", "n/a", "unset", "default"):
+            v = default
+        return v
 
     def _progress_text(self) -> str:
         cfg = self.cfg
